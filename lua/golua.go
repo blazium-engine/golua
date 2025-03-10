@@ -14,6 +14,7 @@ import "C"
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"unsafe"
@@ -199,6 +200,81 @@ func golua_interface_newindex_callback(gostateindex uintptr, iid uint, field_nam
 	return -1
 }
 
+func pushSliceToLua(L *State, s reflect.Value) int {
+	L.NewTable()
+	for i := 0; i < s.Len(); i++ {
+		L.PushInteger(int64(i + 1)) // Lua is 1-indexed
+		if pushAnyToLua(L, s.Index(i)) == -1 {
+			return -1
+		}
+		L.SetTable(-3)
+	}
+	return 1
+}
+
+func pushMapToLua(L *State, m reflect.Value) int {
+	if m.IsNil() || m.Len() == 0 {
+		L.PushNil()
+	}
+
+	L.NewTable()
+	for _, key := range m.MapKeys() {
+		// Convert key to string (only string keys are Lua-compatible)
+		keyStr := fmt.Sprintf("%v", key.Interface())
+		L.PushString(keyStr)
+
+		// Recursively push value
+		value := m.MapIndex(key)
+		if value.Kind() == reflect.Interface {
+			value = value.Elem() // Unwrap to the concrete type
+		}
+		if pushAnyToLua(L, value) == -1 {
+			return -1
+		}
+
+		// Set table entry
+		L.SetTable(-3)
+	}
+	return 1
+}
+
+func pushAnyToLua(L *State, fval reflect.Value) int {
+	// If pointer, dereference
+	if fval.Kind() == reflect.Ptr && !fval.IsNil() {
+		fval = fval.Elem()
+	}
+
+	switch fval.Kind() {
+	case reflect.Bool:
+		L.PushBoolean(fval.Bool())
+		return 1
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		L.PushInteger(fval.Int())
+		return 1
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		L.PushInteger(int64(fval.Uint()))
+		return 1
+	case reflect.String:
+		L.PushString(fval.String())
+		return 1
+	case reflect.Float32, reflect.Float64:
+		L.PushNumber(fval.Float())
+		return 1
+	case reflect.Slice:
+		if fval.Type() == typeOfBytes {
+			L.PushBytes(fval.Bytes())
+			return 1
+		}
+		return pushSliceToLua(L, fval) // Recursive for slices/arrays
+	case reflect.Map:
+		return pushMapToLua(L, fval) // Recursive for maps
+	default:
+		fmt.Println("Unsupported type:", fval.Type().String())
+	}
+	L.PushString("Unsupported type of field: " + fval.Type().String())
+	return -1
+}
+
 //export golua_interface_index_callback
 func golua_interface_index_callback(gostateindex uintptr, iid uint, field_name *C.char) int {
 	L := getGoState(gostateindex)
@@ -207,57 +283,7 @@ func golua_interface_index_callback(gostateindex uintptr, iid uint, field_name *
 
 	fval := ifacevalue.FieldByName(C.GoString(field_name))
 
-	if fval.Kind() == reflect.Ptr {
-		fval = fval.Elem()
-	}
-
-	switch fval.Kind() {
-	case reflect.Bool:
-		L.PushBoolean(fval.Bool())
-		return 1
-
-	case reflect.Int:
-		fallthrough
-	case reflect.Int8:
-		fallthrough
-	case reflect.Int16:
-		fallthrough
-	case reflect.Int32:
-		fallthrough
-	case reflect.Int64:
-		L.PushInteger(fval.Int())
-		return 1
-
-	case reflect.Uint:
-		fallthrough
-	case reflect.Uint8:
-		fallthrough
-	case reflect.Uint16:
-		fallthrough
-	case reflect.Uint32:
-		fallthrough
-	case reflect.Uint64:
-		L.PushInteger(int64(fval.Uint()))
-		return 1
-
-	case reflect.String:
-		L.PushString(fval.String())
-		return 1
-
-	case reflect.Float32:
-		fallthrough
-	case reflect.Float64:
-		L.PushNumber(fval.Float())
-		return 1
-	case reflect.Slice:
-		if fval.Type() == typeOfBytes {
-			L.PushBytes(fval.Bytes())
-			return 1
-		}
-	}
-
-	L.PushString("Unsupported type of field: " + fval.Type().String())
-	return -1
+	return pushAnyToLua(L, fval)
 }
 
 //export golua_gchook
