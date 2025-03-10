@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/aarzilli/golua/lua"
 	"fmt"
+
+	"github.com/blazium-engine/golua/lua"
 )
 
 func test(L *lua.State) int {

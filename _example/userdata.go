@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/aarzilli/golua/lua"
-	"unsafe"
 	"fmt"
+	"unsafe"
+
+	"github.com/blazium-engine/golua/lua"
 )
 
 type Userdata struct {
